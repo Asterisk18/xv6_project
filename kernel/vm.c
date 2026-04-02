@@ -17,6 +17,23 @@ extern char etext[];  // kernel.ld sets this to end of kernel code.
 
 extern char trampoline[]; // trampoline.S
 
+
+// externing and declaring frame_table
+struct frame{
+  int currently_used;
+  struct proc* p;
+  uint64 va;
+  int reference_bit;
+}; 
+// we cannot do extern struct frame, as extern just 
+// tell compiler that "this exists somewhere", but for 
+// this case compiler also need to know the sizeof(struct frame)
+// so we need complete definition of it
+
+extern struct spinlock frametablelock;
+extern struct frame frame_table[(PHYSTOP-KERNBASE)/PGSIZE];
+
+
 // Make a direct-map page table for the kernel.
 pagetable_t
 kvmmake(void)
@@ -82,9 +99,9 @@ kvminithart()
   sfence_vma();
 }
 
-// Return the address of the PTE in page table pagetable
-// that corresponds to virtual address va.  If alloc!=0,
-// create any required page-table pages.
+// Return the address of the PTE in pagetable
+// that corresponds to virtual address va. 
+// alloc!=0 -> create page if needed
 //
 // The risc-v Sv39 scheme has three levels of page-table
 // pages. A page-table page contains 512 64-bit PTEs.
@@ -97,12 +114,12 @@ kvminithart()
 pte_t *
 walk(pagetable_t pagetable, uint64 va, int alloc)
 {
-  if(va >= MAXVA)
+  if(va >= MAXVA) // out of bounds  
     panic("walk");
 
-  for(int level = 2; level > 0; level--) {
+  for(int level = 2; level > 0; level--) { // level 2 (for main pagetable, to read PTE) and 1 (for reading the actual page)
     pte_t *pte = &pagetable[PX(level, va)];
-    if(*pte & PTE_V) {
+    if(*pte & PTE_V) { // if valid, dereference and move to next level
       pagetable = (pagetable_t)PTE2PA(*pte);
     } else {
       if(!alloc || (pagetable = (pde_t*)kalloc()) == 0)
@@ -111,7 +128,7 @@ walk(pagetable_t pagetable, uint64 va, int alloc)
       *pte = PA2PTE(pagetable) | PTE_V;
     }
   }
-  return &pagetable[PX(0, va)];
+  return &pagetable[PX(0, va)]; // returning the address to actual physical page
 }
 
 // Look up a virtual address, return the physical address,
@@ -129,9 +146,9 @@ walkaddr(pagetable_t pagetable, uint64 va)
   pte = walk(pagetable, va, 0);
   if(pte == 0)
     return 0;
-  if((*pte & PTE_V) == 0)
+  if((*pte & PTE_V) == 0) // if its not valid
     return 0;
-  if((*pte & PTE_U) == 0)
+  if((*pte & PTE_U) == 0) // if its not user accessible
     return 0;
   pa = PTE2PA(*pte);
   return pa;
@@ -162,11 +179,24 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
   for(;;){
     if((pte = walk(pagetable, a, 1)) == 0)
       return -1;
-    if(*pte & PTE_V)
+    if(*pte & PTE_V) // that va is already mapped to some other page
       panic("mappages: remap");
-    *pte = PA2PTE(pa) | perm | PTE_V;
+    *pte = PA2PTE(pa) | perm | PTE_V; // writing pa to that PTE
+
+    // updating frame table
+    if(pa >= KERNBASE && pa < PHYSTOP) { // 
+      uint64 pa_page = (pa - KERNBASE) / PGSIZE;
+      acquire(&frametablelock);
+      frame_table[pa_page].currently_used = 1;
+      frame_table[pa_page].p = myproc(); 
+      frame_table[pa_page].reference_bit = 0;
+      frame_table[pa_page].va = va;
+      release(&frametablelock);
+    }
+
     if(a == last)
       break;
+    // moving to next page
     a += PGSIZE;
     pa += PGSIZE;
   }
@@ -198,16 +228,38 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
   if((va % PGSIZE) != 0)
     panic("uvmunmap: not aligned");
 
-  for(a = va; a < va + npages*PGSIZE; a += PGSIZE){
+  for(a = va; a < va + npages*PGSIZE; a += PGSIZE){ // iterating all the pages
     if((pte = walk(pagetable, a, 0)) == 0) // leaf page table entry allocated?
       continue;   
-    if((*pte & PTE_V) == 0)  // has physical page been allocated?
+
+    if((*pte & PTE_V) == 0){ // if valid bit 0
+      if(*pte & PTE_S){ // page in swap
+        uint64 swap_idx = (*pte)>>10;
+        acquire(&swaplock);
+        swap_slots_free[swap_idx] = 1; // marking slot free
+        release(&swaplock);
+        *pte = 0; // clearing PTE entry
+      }
       continue;
-    if(do_free){
-      uint64 pa = PTE2PA(*pte);
-      kfree((void*)pa);
     }
-    *pte = 0;
+
+    uint64 pa = PTE2PA(*pte);
+    if(do_free){
+      kfree((void*)pa); // freeing the actual memory
+    }
+
+    // removing the frametable entry
+    if(pa >= KERNBASE && pa < PHYSTOP) {
+      uint64 pa_page = (pa - KERNBASE) / PGSIZE;
+      acquire(&frametablelock);
+      frame_table[pa_page].currently_used = 0;
+      frame_table[pa_page].p = 0;
+      frame_table[pa_page].reference_bit = 0;
+      frame_table[pa_page].va = 0;
+      release(&frametablelock);
+    }
+
+    *pte = 0; // just removing the mapping va->pa
   }
 }
 
@@ -283,8 +335,8 @@ void
 uvmfree(pagetable_t pagetable, uint64 sz)
 {
   if(sz > 0)
-    uvmunmap(pagetable, 0, PGROUNDUP(sz)/PGSIZE, 1);
-  freewalk(pagetable);
+    uvmunmap(pagetable, 0, PGROUNDUP(sz)/PGSIZE, 1); // frees all the memory pages
+  freewalk(pagetable); // frees the pagetable pages
 }
 
 // Given a parent process's page table, copy
@@ -304,8 +356,24 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
       continue;   // page table entry hasn't been allocated
-    if((*pte & PTE_V) == 0)
-      continue;   // physical page hasn't been allocated
+
+    if((*pte & PTE_V) == 0) {
+      if(*pte & PTE_S) { // page in swap
+        int swap_idx = (*pte) >> 10;
+
+        if((mem = kalloc()) == 0)
+          goto err; // kalloc failed
+
+        memmove(mem, swap_space[swap_idx], PGSIZE); // copying the data from swap in new page
+        // mapping the pa with va in child's PTE
+        if(mappages(new, i, PGSIZE, (uint64)mem, PTE_FLAGS(*pte) | PTE_V) != 0){
+          kfree(mem); // free mem if mapping fails
+          goto err;
+        }
+      }
+      continue; // Skip normal invalid pages
+    }
+
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
     if((mem = kalloc()) == 0)
@@ -455,23 +523,59 @@ vmfault(pagetable_t pagetable, uint64 va, int read)
   uint64 mem;
   struct proc *p = myproc();
 
-  if (va >= p->sz)
+  if (va >= p->sz) // if the page is out of memory, invalid access
     return 0;
-  va = PGROUNDDOWN(va);
+  va = PGROUNDDOWN(va); // taking the last 11 bits from 'va'
+  
+  
+  // check if its in swap
+  pte_t * pte = walk(pagetable, va, 0);
+  if(pte!=0 && (*pte & PTE_S)){ // swap bit 1, bring back the page from swap
+    int swap_idx = *pte>>10;
+    
+    mem = (uint64) kalloc();
+    memmove((void*) mem, swap_space[swap_idx], PGSIZE); // moving data from swap to memory
+    mappages(p->pagetable, va, PGSIZE, mem, 0); // adding PTE for mapping this new page with 'va'
+    
+    *pte = PA2PTE(mem) | PTE_FLAGS(*pte); // Keep old flags for U, R, W, X
+    *pte &= ~PTE_S; // swap bit 0
+    *pte |= PTE_V;  // valid bit 1
+    
+    acquire(&swaplock);
+    swap_slots_free[swap_idx] = 1; // this swap slot is now free
+    release(&swaplock);
+
+    // update process stats
+    p->page_faults++;
+    p->resident_pages++;
+    p->pages_swapped_in++;
+
+    return mem;
+  }
+  
   if(ismapped(pagetable, va)) {
     return 0;
   }
+
+  // if not mapped in pagetable, allocate the
   mem = (uint64) kalloc();
   if(mem == 0)
     return 0;
   memset((void *) mem, 0, PGSIZE);
+  // here p->pagetable is the same thing as the 'pagetable' given as input to vmfault function
   if (mappages(p->pagetable, va, PGSIZE, mem, PTE_W|PTE_U|PTE_R) != 0) {
-    kfree((void *)mem);
+    kfree((void *)mem); // if page mapping unsuccessful, free the memory
     return 0;
   }
-  return mem;
+
+  // update process stats
+  p->page_faults++;
+  p->resident_pages++;
+
+  return mem; // returning the 'pa' of the page
 }
 
+// returns 1 if alr mapped, or else 0
 int
 ismapped(pagetable_t pagetable, uint64 va)
 {

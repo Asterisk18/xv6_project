@@ -37,7 +37,12 @@
 // for use by the kernel and user pages
 // from physical address 0x80000000 to PHYSTOP.
 #define KERNBASE 0x80000000L
-#define PHYSTOP (KERNBASE + 128*1024*1024)
+// 128 MB after kernel base, this is our RAM
+#define PHYSTOP (KERNBASE + 128*1024*1024) 
+
+
+// swap space
+
 
 // map the trampoline page to the highest address,
 // in both user and kernel space.
@@ -56,4 +61,6 @@
 //   ...
 //   TRAPFRAME (p->trapframe, used by the trampoline)
 //   TRAMPOLINE (the same page as in the kernel)
+// this maps traframe address to appropriate 
+// offset from the very end of memory space 
 #define TRAPFRAME (TRAMPOLINE - PGSIZE)

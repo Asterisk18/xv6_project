@@ -104,6 +104,13 @@ struct proc {
   int ticks[NLEVEL]; // total ticks consumed per level
   int times_scheduled; // number of times the process has been scheduled
 
+  // PA_3
+  uint64 page_faults;
+  uint64 pages_evicted;
+  uint64 pages_swapped_in;
+  uint64 pages_swapped_out;
+  uint64 resident_pages;
+
   // wait_lock must be held when using this:
   struct proc *parent;         // Parent process
 
@@ -131,4 +138,13 @@ struct queue{
   struct proc* processes[NPROC];
   int count;
   int start;
+};
+
+// PA_3
+struct vmstats {
+int page_faults;
+int pages_evicted;
+int pages_swapped_in;
+int pages_swapped_out;
+int resident_pages;
 };

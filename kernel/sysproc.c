@@ -59,7 +59,7 @@ sys_sbrk(void)
       return -1;
     if(addr + n > TRAPFRAME)
       return -1;
-    myproc()->sz += n;
+    myproc()->sz += n; // it just marks that we want to increase the size
   }
   return addr;
 }
@@ -220,7 +220,7 @@ uint64
 sys_getmlfqinfo(void)
 {
   int pid;
-  uint64 mlfq_ptr;
+  uint64 mlfq_ptr; // pointer given by user where it wants the output to be written
   argint(0, &pid);
   argaddr(1, &mlfq_ptr);
 
@@ -236,10 +236,38 @@ sys_getmlfqinfo(void)
       info.times_scheduled = it->times_scheduled;
 
       release(&it->lock);
-      return copyout(myproc()->pagetable ,mlfq_ptr, (char*)&info, sizeof(struct mlfqinfo));
+      return copyout(myproc()->pagetable ,mlfq_ptr, (char*)&info, sizeof(struct mlfqinfo)); // writing data from kernel to user-space
     }
     release(&it->lock);
   }
 
+  return -1; // process with given pid not found
+}
+
+uint64
+sys_getvmstats(void)
+{
+  int pid;
+  uint64 vmstats_ptr; // ptr given by user where it wants the output to be written
+  argint(0, &pid);
+  argaddr(1, &vmstats_ptr);
+
+  struct proc* it;
+  for(it = proc; it < &proc[NPROC]; it++){
+    acquire(&it->lock);
+    if(it->pid == pid && it->state != UNUSED){
+
+      struct vmstats info;
+      info.page_faults = it->page_faults;
+      info.pages_evicted = it->pages_evicted;
+      info.pages_swapped_in = it->pages_swapped_in;
+      info.pages_swapped_out = it->pages_swapped_out;
+      info.resident_pages = it->resident_pages;
+
+      release(&it->lock);
+      return copyout(myproc()->pagetable, vmstats_ptr, (char*)&info, sizeof(struct vmstats)); // writing data from kernel to user-space
+    }
+    release(&it->lock);
+  }
   return -1; // process with given pid not found
 }

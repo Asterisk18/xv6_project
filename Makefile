@@ -148,6 +148,7 @@ UPROGS=\
 	$U/_test\
 	$U/_test_new\
 	$U/_mlfqtest\
+	$U/_vmtest\
 
 fs.img: mkfs/mkfs README $(UPROGS)
 	mkfs/mkfs fs.img README $(UPROGS)

@@ -35,8 +35,13 @@ int getnumchild(void);
 int getsyscount(void);
 int getchildsyscount(int);
 int getlevel(void);
-struct mlfqinfo;
+
+// just add struct name so that we can define the function 
+// for now no other use main definitions in proc.h
+struct mlfqinfo; 
+struct vmstats;
 int getmlfqinfo(int, struct mlfqinfo*);
+int getvmstats(int, struct vmstats*);
 
 // ulib.c
 int stat(const char*, struct stat*);

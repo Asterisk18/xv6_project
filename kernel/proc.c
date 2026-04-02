@@ -108,6 +108,7 @@ myproc(void)
   return p;
 }
 
+// assigns the current pid value and increments by 1
 int
 allocpid()
 {
@@ -144,7 +145,7 @@ found:
   p->pid = allocpid();
   p->state = USED; // this should be done before allocpid() function call
 
-  // Allocate a trapframe page.
+  // Allocate a page for trapframe
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
     freeproc(p);
     release(&p->lock);
@@ -172,6 +173,13 @@ found:
   p->curr_ticks = 0;
   for(int i=0;i<NLEVEL;i++) p->ticks[i] = 0;
   p->times_scheduled = 0;
+
+  // PA_3
+  p->page_faults = 0;
+  p->pages_evicted = 0;
+  p->pages_swapped_in = 0;
+  p->pages_swapped_out = 0;
+  p->resident_pages = 0;
 
   return p;
 }

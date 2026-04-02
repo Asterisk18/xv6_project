@@ -1,0 +1,30 @@
+policy for page eviction
+firstly we do a complete pass across all the pages, if at the end we would have found some page on level 2 or 3, we diretcly choose it as victim and break
+if not then we go for another pass and select the first page with access bit 0 as our victim
+
+carefully handled the cases of fork and process killing with the consideration of this new implementation
+since we implemented the swap space now the previous method of just checking the valid bit and deciding wheter we have to free a page or not will not work
+now we also have to check the swap bit, i.e. if the process's page is in the swap space and it forks, then we need to take care that,  that page is eventually 
+copied in the memory of the child process.
+also while killing a process we must ensure all its pages in the swap are marked as free
+
+
+the memory with pa<kernelbase is just used for memory mapped io communication with devices, its not used to store the kernel data
+the kernel data is actually stored in the main memory itself
+
+we will be having the pages of kernel in the memory which were generated at the time of initial booting, these page will also have been logged in the frame_table
+but they didn't had a process running at that time, so the frame_table[i].p value would be null, this will give null pointer derefferencing error later, to avoid this 
+add check for it in mapping function. this includes the initial code, text, setup variables kernel's inbuilt functions and all
+we must make sure that these pages are never selected as victim and moved to swap space
+
+
+why we cannot swap out a kernel page:
+1 possibility of double faults and system crashing
+when we try to run a kernel function but its in the swap we try to bring it back but the vary function required to bring it back is in the swap, 
+this creates another fault and hence recuressively creates faults this is known as double faults
+2 hardware interupts cannot wait, hardware need to be fast
+
+many other problems
+
+
+

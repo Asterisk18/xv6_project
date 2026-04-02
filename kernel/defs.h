@@ -60,6 +60,13 @@ void*           kalloc(void);
 void            kfree(void *);
 void            kinit(void);
 
+#define MAX_SWAP_PAGES 1024
+// externing them so that they don't get redifined at every file where they are being used
+extern struct spinlock swaplock;
+extern char swap_space[MAX_SWAP_PAGES][PGSIZE];
+extern int swap_slots_free[MAX_SWAP_PAGES]; // 1 = free, 0 = used
+
+
 // log.c
 void            initlog(int, struct superblock*);
 void            log_write(struct buf*);
@@ -169,6 +176,8 @@ int             copyin(pagetable_t, char *, uint64, uint64);
 int             copyinstr(pagetable_t, char *, uint64, uint64);
 int             ismapped(pagetable_t, uint64);
 uint64          vmfault(pagetable_t, uint64, int);
+// a
+pte_t*  walk(pagetable_t pagetable, uint64 va, int alloc);
 
 // plic.c
 void            plicinit(void);
